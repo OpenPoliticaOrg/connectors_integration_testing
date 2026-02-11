@@ -1,1 +1,0 @@
-# Coordination Intelligence Platform - Backend
