@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { jwt } from "@elysiajs/jwt";
-import { auth } from "../lib/auth.js";
+import { auth } from "@/lib/auth";
 
 const jwtPlugin = jwt({
   name: "jwt",
@@ -38,9 +38,8 @@ export const authMiddleware = new Elysia()
     };
   });
 
-// @ts-expect-error Bun/Jose type resolution issue
 export const optionalAuthMiddleware = new Elysia()
-  .use(authMiddleware)
+  .use(jwtPlugin)
   .derive({ as: "scoped" }, async ({ request, jwt }) => {
     const session = await auth.api.getSession({
       headers: request.headers,

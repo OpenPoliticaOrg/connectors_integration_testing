@@ -1,9 +1,8 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
-import { authRoutes } from "./routes/auth.js";
-import { authMiddleware, optionalAuthMiddleware } from "./middleware/auth.js";
-import type { AuthContext } from "./middleware/auth.js";
+import { authRoutes } from "@/routes/auth";
+import { authMiddleware, optionalAuthMiddleware } from "@/middleware/auth";
 
 const app = new Elysia()
   .use(
@@ -42,7 +41,7 @@ const app = new Elysia()
 
   // Protected routes with JWT
   .use(authMiddleware)
-  .get("/api/me", ({ user, isAuthenticated }: AuthContext) => {
+  .get("/api/me", ({ user, isAuthenticated }) => {
     if (!isAuthenticated) {
       return { error: "Unauthorized" };
     }
@@ -56,7 +55,7 @@ const app = new Elysia()
     };
   })
 
-  .get("/api/protected", ({ user, isAuthenticated, jwt }: AuthContext) => {
+  .get("/api/protected", ({ user, isAuthenticated, jwt }) => {
     if (!isAuthenticated) {
       return { error: "Unauthorized" };
     }
@@ -69,7 +68,7 @@ const app = new Elysia()
 
   // Optional auth routes
   .use(optionalAuthMiddleware)
-  .get("/api/public-or-auth", ({ user, isAuthenticated }: AuthContext) => {
+  .get("/api/public-or-auth", ({ user, isAuthenticated }) => {
     return {
       message: isAuthenticated
         ? `Hello ${user?.name || user?.email}!`
@@ -92,6 +91,6 @@ console.log(`🔐 Protected endpoints at /api/me, /api/protected`);
 export type App = typeof app;
 
 // Export auth configuration and middleware for use by other services
-export { auth } from "./lib/auth.js";
-export { authMiddleware, optionalAuthMiddleware } from "./middleware/auth.js";
-export type { AuthContext } from "./middleware/auth.js";
+export { auth } from "@/lib/auth";
+export { authMiddleware, optionalAuthMiddleware } from "@/middleware/auth";
+export type { AuthContext } from "@/middleware/auth";
