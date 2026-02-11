@@ -18,7 +18,7 @@ const app = new Elysia()
   .use(oauthRoutes)
   .use(slackEventsRoutes)
   .use(agentRoutes)
-  .listen(process.env.PORT || 3001);
+  .listen(process.env.PORT || 5002);
 
 console.log(`🚀 Connectors service running at ${app.server?.hostname}:${app.server?.port}`);
 console.log(
