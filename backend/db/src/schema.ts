@@ -159,6 +159,32 @@ export const slackConnections = pgTable(
   }),
 );
 
+// Linear Connections
+export const linearConnections = pgTable(
+  "linear_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .references(() => users.id)
+      .notNull(),
+    accessToken: text("access_token").notNull(),
+    refreshToken: text("refresh_token"),
+    tokenExpiresAt: timestamp("token_expires_at"),
+    linearUserId: varchar("linear_user_id", { length: 100 }),
+    linearUserName: varchar("linear_user_name", { length: 255 }),
+    linearOrganizationId: varchar("linear_organization_id", { length: 100 }),
+    linearOrganizationName: varchar("linear_organization_name", { length: 255 }),
+    scopes: text("scopes").array().notNull(),
+    isActive: boolean("is_active").default(true),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index("linear_connections_user_id_idx").on(table.userId),
+    linearUserIdIdx: index("linear_connections_linear_user_id_idx").on(table.linearUserId),
+  }),
+);
+
 // Slack Events - Stores all events from Slack
 export const slackEvents = pgTable(
   "slack_events",
@@ -184,6 +210,45 @@ export const slackEvents = pgTable(
     eventIdIdx: index("slack_events_event_id_idx").on(table.eventId),
     processedIdx: index("slack_events_processed_idx").on(table.processed),
     createdAtIdx: index("slack_events_created_at_idx").on(table.createdAt),
+  }),
+);
+
+// Linear Events - Stores all events from Linear
+export const linearEvents = pgTable(
+  "linear_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: varchar("organization_id", { length: 100 }).notNull(),
+    userId: text("user_id").references(() => users.id),
+    eventType: varchar("event_type", { length: 100 }).notNull(),
+    webhookId: varchar("webhook_id", { length: 255 }).notNull(),
+    eventTimestamp: timestamp("event_timestamp").notNull(),
+    actorId: varchar("actor_id", { length: 100 }),
+    actorName: varchar("actor_name", { length: 255 }),
+    issueId: varchar("issue_id", { length: 100 }),
+    issueIdentifier: varchar("issue_identifier", { length: 100 }),
+    issueTitle: varchar("issue_title", { length: 500 }),
+    projectId: varchar("project_id", { length: 100 }),
+    projectName: varchar("project_name", { length: 255 }),
+    teamId: varchar("team_id", { length: 100 }),
+    teamName: varchar("team_name", { length: 255 }),
+    eventData: jsonb("event_data").notNull(),
+    processed: boolean("processed").default(false),
+    processedAt: timestamp("processed_at"),
+    shouldAiReact: boolean("should_ai_react").default(false),
+    aiReactionTriggered: boolean("ai_reaction_triggered").default(false),
+    aiReactionResult: jsonb("ai_reaction_result"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    organizationIdIdx: index("linear_events_organization_id_idx").on(table.organizationId),
+    eventTypeIdx: index("linear_events_event_type_idx").on(table.eventType),
+    webhookIdIdx: index("linear_events_webhook_id_idx").on(table.webhookId),
+    issueIdIdx: index("linear_events_issue_id_idx").on(table.issueId),
+    processedIdx: index("linear_events_processed_idx").on(table.processed),
+    shouldAiReactIdx: index("linear_events_should_ai_react_idx").on(table.shouldAiReact),
+    createdAtIdx: index("linear_events_created_at_idx").on(table.createdAt),
   }),
 );
 
@@ -279,6 +344,8 @@ export type Member = typeof members.$inferSelect;
 export type GithubInstallation = typeof githubInstallations.$inferSelect;
 export type SlackConnection = typeof slackConnections.$inferSelect;
 export type SlackEvent = typeof slackEvents.$inferSelect;
+export type LinearConnection = typeof linearConnections.$inferSelect;
+export type LinearEvent = typeof linearEvents.$inferSelect;
 export type Tool = typeof tools.$inferSelect;
 export type UserTool = typeof userTools.$inferSelect;
 export type AgentRun = typeof agentRuns.$inferSelect;

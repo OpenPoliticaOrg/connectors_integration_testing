@@ -1,7 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@backend/db";
 import { eq, and, desc } from "drizzle-orm";
-import { jwtAuthMiddleware } from "../middleware/jwt-auth.js";
+import { jwtAuthMiddleware } from "@/middleware/jwt-auth";
 
 const { slackEvents, slackConnections } = schema;
 

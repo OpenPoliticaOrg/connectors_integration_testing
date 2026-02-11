@@ -1,8 +1,9 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { oauthRoutes } from "./routes/oauth.js";
-import { agentRoutes } from "./routes/agent.js";
-import { slackEventsRoutes } from "./routes/slack-events.js";
+import { oauthRoutes } from "@/routes/oauth";
+import { agentRoutes } from "@/routes/agent";
+import { slackEventsRoutes } from "@/routes/slack-events";
+import { linearEventsRoutes } from "@/routes/linear-events";
 
 const app = new Elysia()
   .use(
@@ -17,6 +18,7 @@ const app = new Elysia()
   }))
   .use(oauthRoutes)
   .use(slackEventsRoutes)
+  .use(linearEventsRoutes)
   .use(agentRoutes)
   .listen(process.env.PORT || 5002);
 

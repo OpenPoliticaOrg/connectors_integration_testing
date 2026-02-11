@@ -1,5 +1,5 @@
 import { Elysia } from "elysia";
-import { auth } from "../lib/auth.js";
+import { auth } from "@/lib/auth";
 
 export const authRoutes = new Elysia({ prefix: "/api/auth" }).all(
   "/*",

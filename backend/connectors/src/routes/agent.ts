@@ -1,10 +1,12 @@
 import { Elysia, t } from "elysia";
 import { db, schema } from "@backend/db";
 import { eq, and } from "drizzle-orm";
-import { jwtAuthMiddleware } from "../middleware/jwt-auth.js";
-import { mcpClientManager } from "../mcp/client.js";
+import { jwtAuthMiddleware } from "@/middleware/jwt-auth";
+import { mcpClientManager } from "@/mcp/client";
+import { decryptSafe } from "@/lib/encryption";
+import { getValidLinearToken } from "@/lib/token-refresh";
 
-const { agentRuns, tools, userTools, githubInstallations } = schema;
+const { agentRuns, tools, userTools, githubInstallations, linearConnections } = schema;
 
 export const agentRoutes = new Elysia({ prefix: "/agent" })
   .use(jwtAuthMiddleware)
@@ -44,11 +46,41 @@ export const agentRoutes = new Elysia({ prefix: "/agent" })
           },
         );
 
+        // Get Linear connection with auto-refresh if needed
+        let linearToken: string | undefined;
+        let linearScopes: string[] = [];
+        let linearConnection = await db.query.linearConnections.findFirst({
+          where: and(
+            eq(linearConnections.userId, userId),
+            eq(linearConnections.isActive, true),
+          ),
+        });
+
+        if (linearConnection) {
+          try {
+            // Get valid token (auto-refreshes if expired)
+            linearToken = await getValidLinearToken(linearConnection.id);
+            linearScopes = linearConnection.scopes;
+          } catch (error) {
+            console.error("Failed to get valid Linear token:", error);
+            // Continue without Linear - user will need to reconnect
+            linearConnection = undefined;
+          }
+        }
+
         if (githubInstallation) {
           await mcpClientManager.connectServer({
             id: "github",
             name: "github",
             url: process.env.GITHUB_MCP_URL!,
+          });
+        }
+
+        if (linearConnection && linearToken) {
+          await mcpClientManager.connectServer({
+            id: "linear",
+            name: "linear",
+            url: process.env.LINEAR_MCP_URL!,
           });
         }
 
@@ -74,6 +106,14 @@ export const agentRoutes = new Elysia({ prefix: "/agent" })
             githubInstallationId:
               githubInstallation?.installationId ?? undefined,
             githubAccount: githubInstallation?.accountLogin ?? undefined,
+            linearConnection: linearConnection && linearToken
+              ? {
+                  accessToken: linearToken, // Decrypted, valid token
+                  scopes: linearScopes,
+                  userName: linearConnection.linearUserName ?? undefined,
+                  organizationName: linearConnection.linearOrganizationName ?? undefined,
+                }
+              : undefined,
           },
         });
 
@@ -173,13 +213,24 @@ async function executeWithMastra({
     userId: string;
     githubInstallationId?: number;
     githubAccount?: string;
+    linearConnection?: {
+      accessToken: string;
+      scopes: string[];
+      userName?: string;
+      organizationName?: string;
+    };
   };
 }): Promise<string> {
   if (tools.length === 0) {
-    return `I received: "${prompt}"\n\nNo tools enabled. Connect GitHub or Slack first.`;
+    return `I received: "${prompt}"\n\nNo tools enabled. Connect GitHub, Slack, or Linear first.`;
   }
 
   const toolList = tools.map((t) => t.name).join(", ");
+  const linearStatus = context.linearConnection
+    ? `connected (${context.linearConnection.userName} @ ${context.linearConnection.organizationName})`
+    : "not connected";
 
-  return `I received: "${prompt}"\n\nAvailable tools: ${toolList}\n\nContext: user=${context.userId}, github=${context.githubAccount || "not connected"}\n\n[Note: Mastra integration not yet implemented]`;
+  // TODO: Implement actual Mastra integration
+  // For now, return a placeholder that shows tool availability
+  return `I received: "${prompt}"\n\nAvailable tools: ${toolList}\n\nContext:\n- user=${context.userId}\n- github=${context.githubAccount || "not connected"}\n- linear=${linearStatus}\n\n[Note: Mastra integration not yet implemented. In production, Mastra would analyze this prompt and call appropriate tools via MCP.]\n\nTo use Linear tools, the system would:\n1. Pass your OAuth token securely to the MCP server\n2. Execute the GraphQL query\n3. Return formatted results\n\nYour Linear token is stored securely and NEVER exposed to the LLM.`;
 }

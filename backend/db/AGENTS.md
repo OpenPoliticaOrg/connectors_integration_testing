@@ -20,9 +20,21 @@ bun run typecheck      # TypeScript check (no emit)
 
 ### Imports
 
-- Use `.js` extensions for all imports (e.g., `import { foo } from "./bar.js"`)
-- Group imports: 1) external libs, 2) schema exports, 3) types
+- **Use `@/` path alias for internal imports** (e.g., `import { schema } from "@/schema"`)
+- **No file extensions needed** - TypeScript handles this automatically
+- Group imports: 1) external libs, 2) internal `@/*` modules, 3) types
 - Export schema from index.ts for use by other packages
+
+**Examples:**
+```typescript
+// ✅ CORRECT - Use @/ path alias
+import * as schema from "@/schema";
+export * from "@/schema";
+
+// ❌ AVOID - Don't use relative paths with extensions
+import * as schema from "./schema.js";
+export * from "./schema.js";
+```
 
 ### TypeScript
 

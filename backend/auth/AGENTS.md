@@ -16,13 +16,49 @@ bun run typecheck      # TypeScript check (no emit)
 
 **Note:** This project uses Bun runtime, not Node.js.
 
+## TypeScript Configuration
+
+The auth service uses `@/` path aliases for clean imports:
+
+```json
+{
+  "compilerOptions": {
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  }
+}
+```
+
+**Note:** Due to complex JWT type inference with @elysiajs/jwt, some TypeScript warnings may appear. These are known limitations and do not affect runtime functionality.
+
 ## Code Style Guidelines
 
 ### Imports
 
-- Use `.js` extensions for all imports (e.g., `import { foo } from "./bar.js"`)
-- Group imports: 1) external libs, 2) internal modules, 3) types
+- **Use `@/` path alias for internal imports** (e.g., `import { auth } from "@/lib/auth"`)
+- **No file extensions needed** - TypeScript handles this automatically
+- Group imports: 1) external libs, 2) internal `@/*` modules, 3) types
 - Use workspace alias `@backend/db` for shared database package
+
+**Examples:**
+```typescript
+// ✅ CORRECT - Use @/ path alias
+import { auth } from "@/lib/auth";
+import { authRoutes } from "@/routes/auth";
+import { authMiddleware } from "@/middleware/auth";
+```
+import { auth } from "@/lib/auth";
+import { authRoutes } from "@/routes/auth";
+import { authMiddleware } from "@/middleware/auth";
+
+// ❌ AVOID - Don't use relative paths with extensions
+import { auth } from "./lib/auth.js";
+import { authRoutes } from "./routes/auth.js";
+```
 
 ### TypeScript
 

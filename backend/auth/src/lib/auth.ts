@@ -2,7 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db, schema } from "@backend/db";
 import { bearer, admin, twoFactor, organization, jwt } from "better-auth/plugins";
-import { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } from "./email.js";
+import { sendVerificationEmail, sendPasswordResetEmail, sendWelcomeEmail } from "./email";
 
 const isProduction = process.env.NODE_ENV === "production";
 
