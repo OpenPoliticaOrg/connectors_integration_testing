@@ -1,259 +1,232 @@
-# Agent Instructions for AI Agent Connectors
+# Agent Instructions - Connectors Service (@backend/connectors)
 
-## TypeScript Configuration
+## Service Overview
 
-This project uses a modern TypeScript setup for clean imports and full type safety:
+AI Agent connectors service with OAuth integrations, webhooks, and MCP clients.
 
-```json
-{
-  "compilerOptions": {
-    "module": "ES2022",
-    "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
-```
+**Port:** 5002
+**Stack:** Elysia + Anthropic SDK + jose (JWT validation)
 
-**Key Features:**
-- `@/*` path alias maps to `src/` directory
-- No `.js` extensions needed in imports
-- Full IntelliSense and type checking
-- Works with both development and production builds
+## Key Patterns
 
-## Build & Development Commands
+### JWT Authentication (No Better Auth)
+
+This service does NOT use Better Auth. It validates JWTs from the auth service via JWKS.
+
+**JWKS validation:**
+- Fetch JWKS from auth service: `/.well-known/jwks.json`
+- Cache JWKS client indefinitely
+- Validate tokens using `jose` library
+- Extract user info from JWT payload
+
+**Environment variables:**
+- `AUTH_JWKS_URL` (e.g., http://localhost:5001/.well-known/jwks.json)
+- `AUTH_ISSUER`
+- `AUTH_AUDIENCE`
+
+### OAuth Flows
+
+**PKCE pattern (Linear):**
+1. Generate PKCE pair (code_verifier, code_challenge)
+2. Store code_verifier temporarily (10 min expiration)
+3. Redirect to OAuth provider with PKCE parameters
+4. Exchange code for token with code_verifier
+5. Encrypt and store tokens
+6. Link to user account
+
+**GitHub App pattern:**
+- Uses installation flow (not OAuth)
+- Webhook handles install/uninstall events
+- User links installation via API
+
+### Token Security
+
+**Required:**
+- Encrypt tokens before storage (AES-256-GCM)
+- Store encryption key in `ENCRYPTION_KEY` env var
+- Decrypt tokens only when needed
+- Implement token refresh for expiring tokens
+
+### Webhook Security
+
+Webhooks don't use JWT - they use signature verification:
+
+**Slack:** Verify `x-slack-signature` header using signing secret
+**Linear:** Verify webhook signature (if provided)
+**GitHub:** Verify signature using webhook secret (TODO)
+
+### MCP Client Pattern
+
+1. Connect to MCP servers based on user integrations
+2. Discover available tools
+3. Filter tools by user allowlist
+4. Execute agent run with available tools
+5. Disconnect after completion
+
+## Development Commands
 
 ```bash
-# Development server with hot reload
+# Start with hot reload
 bun run dev
 
-# Production build
+# Type check
+bun run typecheck
+
+# Production
 bun run start
-
-# Database operations
-bun run db:generate     # Generate migrations
-bun run db:migrate      # Run migrations
-bun run db:push         # Push schema changes
-bun run db:studio       # Open Drizzle Studio
-
-# Code quality
-bun run lint           # Run ESLint
-bun run typecheck      # TypeScript check (no emit)
 ```
 
-**Note:** This project uses Bun runtime, not Node.js.
+## Common Tasks
 
-## Code Style Guidelines
+### Adding OAuth Provider
 
-### Imports
+1. Add client ID/secret/redirect URI to `.env`
+2. Create PKCE helper functions in `src/lib/pkce.ts`
+3. Add authorization URL endpoint (public)
+4. Add callback handler (public)
+5. Add link endpoint (JWT required)
+6. Implement token refresh in `src/lib/token-refresh.ts`
+7. Add table to @backend/db schema if needed
 
-- **Use `@/` path alias for internal imports** (e.g., `import { foo } from "@/lib/utils"`)
-- **No file extensions needed** - TypeScript handles this automatically
-- Group imports: 1) external libs, 2) internal `@/*` modules, 3) types
-- Always use `@/` for imports from `src/` directory
+### Adding MCP Server
 
-**Examples:**
-```typescript
-// ✅ CORRECT - Use @/ path alias
-import { encrypt } from "@/lib/encryption";
-import { jwtAuthMiddleware } from "@/middleware/jwt-auth";
-import { linearEventsRoutes } from "@/routes/linear-events";
+1. Add MCP server URL to `.env`
+2. Connect client when user has related integration
+3. Add tools to available tool list
+4. Pass credentials securely to MCP (encrypted)
 
-// ❌ AVOID - Don't use relative paths with extensions
-import { encrypt } from "../lib/encryption.js";
-import { jwtAuthMiddleware } from "../middleware/jwt-auth.js";
-```
+### Processing Webhooks
 
-### TypeScript Configuration
+1. Create route with signature verification middleware
+2. Parse and validate webhook payload
+3. Store event in database
+4. Return appropriate response
+5. Process event asynchronously (not in webhook handler)
 
-The project uses `bundler` module resolution for clean imports:
-- `module: "ES2022"` - Modern ES modules
-- `moduleResolution: "bundler"` - Supports clean `@/` imports
-- `baseUrl: "."` - Root directory for path resolution
-- `paths: { "@/*": ["./src/*"] }` - Maps `@/` to `src/` directory
+## Security Requirements
 
-### TypeScript
+**OAuth:**
+- Use PKCE for OAuth 2.1 flows
+- Encrypt tokens before storage
+- Implement token refresh
+- Never expose tokens in logs
 
-- Enable `strict: true` - no `any` types allowed
-- Always specify return types for exported functions
-- Use `type` imports: `import type { Foo } from "..."`
-- Prefer interfaces for object shapes, types for unions
+**Webhooks:**
+- Verify signatures on all webhooks
+- Return quickly (don't block)
+- Store events, process asynchronously
 
-### Naming Conventions
+**JWT:**
+- Validate via JWKS only
+- Check issuer and audience
+- Handle expiration properly
 
-- Files: kebab-case (e.g., `slack-events.ts`)
-- Functions/variables: camelCase
-- Constants: UPPER_SNAKE_CASE for true constants
-- Database tables: snake_case (enforced by Drizzle)
-- Types/Interfaces: PascalCase
+**Encryption:**
+- ENCRYPTION_KEY must be 32 characters
+- Use AES-256-GCM
+- Store keys securely (not in code)
 
-### Error Handling
+## Environment Variables
 
-- Always use try/catch for async operations
-- Return consistent error format: `{ success: false, error: string }`
-- Log errors with context before returning
-- Use Zod for runtime validation of request bodies
+```env
+# Database
+DATABASE_URL=postgresql://...
 
-### Database
+# JWT Validation
+AUTH_JWKS_URL=http://localhost:5001/.well-known/jwks.json
+AUTH_ISSUER=http://localhost:5001
+AUTH_AUDIENCE=http://localhost:5001
 
-- Use Drizzle ORM with PostgreSQL
-- Always define indexes for foreign keys and frequently queried fields
-- Use transactions for multi-table operations
-- Never store plain text secrets (encrypt tokens)
+# CORS
+CORS_ORIGINS=http://localhost:3000
 
-### API Routes (Elysia)
+# Encryption
+ENCRYPTION_KEY=<32-char-key>
 
-```typescript
-export const routes = new Elysia({ prefix: "/path" }).get(
-  "/endpoint",
-  async ({ query, jwt }) => {
-    // Validate auth
-    // Process request
-    // Return { success: true, data: {} }
-  },
-  {
-    query: t.Object({ param: t.String() }), // Zod validation
-  },
-);
-```
-
-### Environment Variables
-
-- Access via `process.env.VAR_NAME`
-- Use `!` for required vars, provide defaults for optional
-- Never commit `.env` files
-
-### Comments
-
-- Use JSDoc for exported functions
-- Section headers: `// ==========================================`
-- Explain WHY, not WHAT (code should be self-documenting)
-
-### Security
-
-- Verify JWT on all protected routes
-- Validate Slack/GitHub/Linear webhook signatures
-- Never log sensitive data (tokens, passwords)
-- Use parameterized queries (Drizzle handles this)
-
-## Linear MCP Integration
-
-This package includes full Linear integration via MCP (Model Context Protocol) and webhooks.
-
-### Components
-
-1. **Linear MCP Server** (`src/mcp/linear.ts`)
-   - Stateless GraphQL client for Linear API
-   - 7 tools: list/get/create/update issues, teams, projects, search
-   - Tool-level authorization (read/write scopes)
-   - Receives OAuth tokens per-request (no token storage)
-
-2. **Linear OAuth Routes** (`src/routes/oauth.ts`)
-   - `GET /oauth/linear` - Initiate OAuth flow with PKCE
-   - `GET /oauth/linear/callback` - OAuth callback with PKCE verification
-   - `POST /oauth/linear/link` - Link connection to user
-   - Supports disconnect and connection status
-   - Tokens encrypted before database storage
-
-3. **Linear Events/Webhooks** (`src/routes/linear-events.ts`)
-   - `POST /linear/webhook` - Receive Linear webhooks
-   - `GET /linear/events` - List events with filters
-   - `GET /linear/events/stats` - Event statistics
-   - `POST /linear/events/:id/react` - Trigger AI reaction
-   - Automatic AI reaction detection based on priority/mentions/state
-
-4. **Agent Integration** (`src/routes/agent.ts`)
-   - Checks for Linear connection before running agent
-   - Auto-refreshes expired tokens
-   - Passes decrypted OAuth tokens securely to MCP server
-   - Passes scopes for authorization checks
-   - Tokens never exposed to LLM
-
-5. **Security Libraries**
-   - `src/lib/encryption.ts` - AES-256-GCM token encryption
-   - `src/lib/pkce.ts` - PKCE code verifier/challenge generation
-   - `src/lib/token-refresh.ts` - Automatic token refresh logic
-
-### Environment Variables
-
-```bash
 # OAuth
-LINEAR_CLIENT_ID=xxx
-LINEAR_CLIENT_SECRET=xxx
-LINEAR_REDIRECT_URI=http://localhost:3000/oauth/linear/callback
-
-# MCP Server
-LINEAR_MCP_URL=http://localhost:3003/sse
+LINEAR_CLIENT_ID=
+LINEAR_CLIENT_SECRET=
+LINEAR_REDIRECT_URI=
+GITHUB_APP_NAME=
 
 # Webhooks
-LINEAR_WEBHOOK_SECRET=xxx
+SLACK_SIGNING_SECRET=
+
+# AI
+ANTHROPIC_API_KEY=
+
+# MCP Servers
+GITHUB_MCP_URL=
+LINEAR_MCP_URL=
+
+# Server
+PORT=5002
 ```
 
-### Database Tables
+## Route Organization
 
-- `linear_connections` - OAuth tokens and user/org info
-- `linear_events` - Webhook events with AI reaction tracking
+**Public routes:**
+- OAuth authorization URLs
+- OAuth callbacks
+- Webhooks (signature verified)
+- Health check
 
-### Security Model
+**JWT-protected routes:**
+- OAuth connection linking
+- Get connections
+- Agent run endpoints
+- Event management APIs
 
-**Token Encryption (AES-256-GCM)**
-- OAuth tokens encrypted at rest using `src/lib/encryption.ts`
-- Uses 32-byte key from `ENCRYPTION_KEY` environment variable
-- Generates unique salt and IV for each encryption
-- Authenticated encryption prevents tampering
+## Database Patterns
 
-**OAuth 2.1 + PKCE**
-- PKCE (Proof Key for Code Exchange) implemented for OAuth flow
-- Generates code_verifier and code_challenge
-- Prevents authorization code interception attacks
-- Required by MCP 2025 specification
-
-**Tool-Level Authorization**
-- Read operations require `read` scope
-- Write operations require `write` scope
-- Admin scope bypasses all checks
-- Enforced in MCP server before API calls
-
-**Token Auto-Refresh**
-- Automatically refreshes expired tokens (5-min buffer)
-- Uses refresh_token to get new access_token
-- Updates encrypted tokens in database
-- Happens transparently during agent execution
-
-**Token Flow**
-- OAuth tokens stored encrypted in database
-- Tokens passed via `_oauthToken` context field (invisible to LLM)
-- Scopes passed via `_scopes` for authorization checks
-- MCP server is stateless - no token persistence
-- Webhook signatures verified via Authorization header
-
-### Testing
-
-```bash
-# Test OAuth flow
-curl http://localhost:3000/oauth/linear
-
-# Test webhooks
-curl -X POST http://localhost:3000/linear/webhook \
-  -H "Authorization: Bearer $LINEAR_WEBHOOK_SECRET" \
-  -d '{"type": "Issue", "data": {...}}'
-
-# List events requiring AI reaction
-curl "http://localhost:3000/linear/events?shouldReact=true" \
-  -H "Authorization: Bearer <jwt>"
+**Querying with relations:**
+```typescript
+await db.query.tableName.findFirst({
+  where: eq(tableName.column, value)
+})
 ```
 
-### Testing
+**Insert with returning:**
+```typescript
+const [record] = await db.insert(table).values({...}).returning()
+```
 
-- Use Bun's built-in test runner: `bun test`
-- Run single test: `bun test path/to/test.ts`
-- Mock external APIs in tests
-- Test error cases, not just happy paths
+**Update with conditions:**
+```typescript
+await db.update(table).set({...}).where(eq(table.id, id))
+```
 
-### Git Workflow
+## Integration with Auth Service
 
-- Use conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`
-- One logical change per commit
-- Run `bun run lint && bun run typecheck` before committing
+- No direct HTTP calls to auth service
+- JWT validation via JWKS endpoint
+- User identity from JWT claims
+- User IDs must match auth service
+
+## Troubleshooting
+
+**JWT validation fails:**
+- Check AUTH_JWKS_URL is accessible
+- Verify issuer/audience match
+- Check JWT not expired
+
+**OAuth callback fails:**
+- Verify PKCE code_verifier stored correctly
+- Check redirect URI matches exactly
+- Ensure state parameter validated
+
+**Token encryption fails:**
+- Verify ENCRYPTION_KEY is 32 characters
+- Check key doesn't contain special chars that break env
+
+**Webhook signature fails:**
+- Verify signing secret correct
+- Check request body not modified
+- Ensure timestamp not too old
+
+## Resources
+
+- [Elysia Docs](https://elysiajs.com/)
+- [Jose Library](https://github.com/panva/jose)
+- [MCP Protocol](https://modelcontextprotocol.io/)
+- [Anthropic API](https://docs.anthropic.com/)

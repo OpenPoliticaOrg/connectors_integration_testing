@@ -1,155 +1,154 @@
-# Agent Instructions for Auth Service
+# Agent Instructions - Auth Service (@backend/auth)
 
-## Build & Development Commands
+## Service Overview
+
+Central authentication service with Better Auth, JWT/JWKS, email flows, and organizations.
+
+**Port:** 5001
+**Stack:** Elysia + Better Auth + Drizzle ORM
+
+## Key Patterns
+
+### Better Auth Integration
+
+The auth service uses Better Auth with the Drizzle adapter. Configuration is centralized in `src/lib/auth.ts`.
+
+**Required environment variables:**
+- `BETTER_AUTH_SECRET` (32+ chars, openssl rand -base64 32)
+- `BETTER_AUTH_URL` (e.g., http://localhost:5001)
+- `DATABASE_URL`
+- `JWT_SECRET` (different from auth secret)
+
+**Better Auth plugins used:**
+- `bearer` - API token auth
+- `jwt` - JWT with JWKS for cross-service auth
+- `admin` - User management
+- `twoFactor` - TOTP/OTP 2FA
+- `organization` - Teams/organizations
+
+### Elysia Patterns
+
+**Route organization:**
+- Routes in `src/routes/` as Elysia plugins
+- Middleware in `src/middleware/` as Elysia plugins
+- Use `.derive()` to add context to requests
+- Apply middleware after public routes
+
+**Middleware pattern:**
+- Use `as: "scoped"` for middleware derivation
+- Check Better Auth session via `auth.api.getSession()`
+- Add JWT token to context using `@elysiajs/jwt`
+
+### Database Tables
+
+Better Auth requires these tables (defined in @backend/db):
+- `users`, `sessions`, `accounts`, `verifications` (core)
+- `organizations`, `members`, `invitations` (organization plugin)
+- `twoFactors` (twoFactor plugin)
+
+## Development Commands
 
 ```bash
-# Development server with hot reload
+# Start with hot reload
 bun run dev
 
-# Production build
+# Type check
+bun run check-types
+
+# Production
 bun run start
-
-# Code quality
-bun run lint           # Run ESLint
-bun run typecheck      # TypeScript check (no emit)
 ```
 
-**Note:** This project uses Bun runtime, not Node.js.
+## Common Tasks
 
-## TypeScript Configuration
+### Adding OAuth Provider
 
-The auth service uses `@/` path aliases for clean imports:
+1. Add client ID/secret to `.env`
+2. Add provider config to `src/lib/auth.ts` socialProviders
+3. Ensure redirect URI configured in provider dashboard
+4. Test sign-in flow
 
-```json
-{
-  "compilerOptions": {
-    "module": "ES2022",
-    "moduleResolution": "bundler",
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
-  }
-}
+### Adding Better Auth Plugin
+
+1. Import plugin in `src/lib/auth.ts`
+2. Add to plugins array
+3. If plugin adds tables, regenerate DB schema
+4. Re-run migrations if needed
+
+### Email Configuration
+
+1. Set `RESEND_API_KEY` in `.env`
+2. Configure `emailAndPassword.sendResetPassword` handler
+3. Configure `emailVerification.sendVerificationEmail` handler
+4. Test email flows in development
+
+## Security Requirements
+
+**Must configure:**
+- `BETTER_AUTH_SECRET` (32+ characters)
+- `useSecureCookies: true` in production
+- `trustedOrigins` for CORS domains
+- Rate limiting on auth endpoints
+- Email verification for production
+
+**Secrets:**
+- JWT_SECRET must differ from BETTER_AUTH_SECRET
+- Never log secrets or tokens
+- Use HTTPS in production
+
+## Environment Variables
+
+```env
+BETTER_AUTH_SECRET=
+BETTER_AUTH_URL=http://localhost:5001
+DATABASE_URL=postgresql://...
+CORS_ORIGINS=http://localhost:3000
+JWT_SECRET=
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+RESEND_API_KEY=
+FROM_EMAIL=
+PORT=5001
 ```
 
-**Note:** Due to complex JWT type inference with @elysiajs/jwt, some TypeScript warnings may appear. These are known limitations and do not affect runtime functionality.
+## Service Endpoints
 
-## Code Style Guidelines
+Better Auth automatically creates:
+- POST `/api/auth/sign-up/email`
+- POST `/api/auth/sign-in/email`
+- POST `/api/auth/sign-in/social`
+- POST `/api/auth/sign-out`
+- GET `/api/auth/session`
+- GET `/.well-known/jwks.json` (for other services)
 
-### Imports
+## Integration with Other Services
 
-- **Use `@/` path alias for internal imports** (e.g., `import { auth } from "@/lib/auth"`)
-- **No file extensions needed** - TypeScript handles this automatically
-- Group imports: 1) external libs, 2) internal `@/*` modules, 3) types
-- Use workspace alias `@backend/db` for shared database package
+Other services validate JWTs using the JWKS endpoint:
+- `AUTH_JWKS_URL=http://localhost:5001/.well-known/jwks.json`
+- No direct service-to-service calls needed
+- JWTs validated via `jose` library with JWKS
 
-**Examples:**
-```typescript
-// ✅ CORRECT - Use @/ path alias
-import { auth } from "@/lib/auth";
-import { authRoutes } from "@/routes/auth";
-import { authMiddleware } from "@/middleware/auth";
-```
-import { auth } from "@/lib/auth";
-import { authRoutes } from "@/routes/auth";
-import { authMiddleware } from "@/middleware/auth";
+## Troubleshooting
 
-// ❌ AVOID - Don't use relative paths with extensions
-import { auth } from "./lib/auth.js";
-import { authRoutes } from "./routes/auth.js";
-```
+**"Secret not set" error:**
+- Add BETTER_AUTH_SECRET to .env
 
-### TypeScript
+**"Invalid Origin" error:**
+- Add domain to trustedOrigins in auth config
 
-- Enable `strict: true` - no `any` types allowed
-- Always specify return types for exported functions
-- Use `type` imports: `import type { Foo } from "..."`
-- Prefer interfaces for object shapes, types for unions
-- Use `noUncheckedIndexedAccess: true` - handle potentially undefined values
+**Cookies not setting:**
+- Check BETTER_AUTH_URL matches actual domain
+- Enable useSecureCookies in production
+- Verify HTTPS
 
-### Naming Conventions
+**OAuth callback fails:**
+- Verify redirect URIs match in provider dashboard exactly
 
-- Files: kebab-case (e.g., `auth-client.ts`)
-- Functions/variables: camelCase
-- Constants: UPPER_SNAKE_CASE for true constants
-- Database tables: snake_case (enforced by Drizzle schema)
-- Types/Interfaces: PascalCase
-- Plugin instances: camelCase (e.g., `authRoutes`, `jwtMiddleware`)
+## Resources
 
-### Error Handling
-
-- Always use try/catch for async operations
-- Log errors with context using `console.error()` before throwing
-- Return consistent error format in routes: `{ error: string }`
-- In middleware, use `set.status` to set HTTP status codes
-
-### Better Auth Patterns
-
-```typescript
-// Auth configuration
-export const auth = betterAuth({
-  database: drizzleAdapter(db, { provider: "pg", schema: { ... } }),
-  secret: process.env.BETTER_AUTH_SECRET,
-  baseURL: process.env.BETTER_AUTH_URL,
-  plugins: [bearer(), jwt({ ... }), admin(), twoFactor(), organization()],
-});
-
-// Auth routes
-export const authRoutes = new Elysia({ prefix: "/api/auth" })
-  .all("/*", async ({ request }) => auth.handler(request));
-
-// Protected middleware
-export const authMiddleware = new Elysia()
-  .use(jwtMiddleware)
-  .derive({ as: "scoped" }, async ({ request, jwt, set }) => {
-    const session = await auth.api.getSession({ headers: request.headers });
-    if (!session) {
-      set.status = 401;
-      return { user: null, session: null, isAuthenticated: false };
-    }
-    return { user: session.user, session: session.session, isAuthenticated: true };
-  });
-```
-
-### Email Service
-
-- Use Resend for production emails
-- Log to console in development (`NODE_ENV !== "production"`)
-- Always wrap `resend.emails.send()` in try/catch
-- Export typed parameters for each email function
-
-### Environment Variables
-
-- Access via `process.env.VAR_NAME`
-- Provide sensible defaults for development (e.g., `|| "http://localhost:3000"`)
-- Required production vars should use `!` assertion after checking
-- Never commit `.env` files or log secrets
-
-### Security
-
-- Use secure cookies in production (`useSecureCookies: true`)
-- Implement rate limiting for auth endpoints
-- Validate CORS origins explicitly
-- Store secrets in environment variables only
-- Use JWT with appropriate expiration times
-
-### Database
-
-- Use Drizzle ORM with PostgreSQL via `@backend/db` workspace package
-- Reference schema tables from `@backend/db` package
-- Use transactions for multi-table operations
-- Never store plain text passwords (Better Auth handles hashing)
-
-### Testing
-
-- Use Bun's built-in test runner: `bun test`
-- Run single test: `bun test path/to/test.ts`
-- Mock external APIs (Resend) in tests
-- Test both authenticated and unauthenticated scenarios
-
-### Git Workflow
-
-- Use conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`
-- Run `bun run lint && bun run typecheck` before committing
-- One logical change per commit
+- [Better Auth Docs](https://better-auth.com/docs)
+- [Better Auth Plugins](https://better-auth.com/docs/concepts/plugins)
+- [Elysia Docs](https://elysiajs.com/)
+- [Drizzle ORM Docs](https://orm.drizzle.team/)
