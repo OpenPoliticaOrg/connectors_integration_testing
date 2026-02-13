@@ -9,15 +9,10 @@ const isProduction = process.env.NODE_ENV === "production";
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "pg",
+    usePlural: true,
     schema: {
-      user: schema.users,
-      session: schema.sessions,
-      account: schema.accounts,
-      verification: schema.verifications,
-      organization: schema.organizations,
-      member: schema.members,
-      invitation: schema.invitations,
-      twoFactor: schema.twoFactors,
+      ...schema,
+      jwkss: schema.jwks,
     },
   }),
   secret: process.env.BETTER_AUTH_SECRET,
@@ -95,16 +90,7 @@ export const auth = betterAuth({
 
   plugins: [
     bearer(),
-    jwt({
-      jwks: {
-        jwksPath: "/.well-known/jwks.json",
-      },
-      jwt: {
-        issuer: process.env.BETTER_AUTH_URL || "http://localhost:3000",
-        audience: process.env.BETTER_AUTH_URL || "http://localhost:3000",
-        expirationTime: "1h",
-      },
-    }),
+    jwt(),
     admin(),
     twoFactor({
       otpOptions: {
