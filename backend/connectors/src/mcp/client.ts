@@ -18,10 +18,8 @@ export class McpClientManager {
   private clients: Map<string, Client> = new Map();
   private transports: Map<string, SSEClientTransport> = new Map();
   private tools: Map<string, ToolWithServer> = new Map();
+  private authContexts: Map<string, { token: string; scopes: string[] }> = new Map();
 
-  /**
-   * Connect to an MCP server via HTTP/SSE
-   */
   async connectServer(config: McpServerConfig): Promise<void> {
     if (this.clients.has(config.id)) {
       console.log(`Already connected to ${config.name}`);
@@ -29,18 +27,8 @@ export class McpClientManager {
     }
 
     try {
-      // Create SSE transport
       const transport = new SSEClientTransport(new URL(config.url));
 
-      // Add auth header if provided
-      if (config.authToken) {
-        transport.onmessage = (message) => {
-          // Handle incoming messages
-          console.log(`[${config.name}] Message:`, message);
-        };
-      }
-
-      // Create client
       const client = new Client(
         {
           name: "ai-agent-backend",
@@ -51,14 +39,11 @@ export class McpClientManager {
         },
       );
 
-      // Connect
       await client.connect(transport);
 
-      // Store references
       this.clients.set(config.id, client);
       this.transports.set(config.id, transport);
 
-      // Discover tools
       await this.discoverTools(config);
 
       console.log(`✅ Connected to ${config.name} MCP server`);
@@ -68,9 +53,6 @@ export class McpClientManager {
     }
   }
 
-  /**
-   * Discover tools from an MCP server
-   */
   private async discoverTools(config: McpServerConfig): Promise<void> {
     const client = this.clients.get(config.id);
     if (!client) return;
@@ -95,27 +77,18 @@ export class McpClientManager {
     }
   }
 
-  /**
-   * Get all available tools from all connected servers
-   */
   getAllTools(): ToolWithServer[] {
     return Array.from(this.tools.values());
   }
 
-  /**
-   * Get tools filtered by server
-   */
   getToolsByServer(serverId: string): ToolWithServer[] {
     return this.getAllTools().filter((tool) => tool.serverId === serverId);
   }
 
-  /**
-   * Call a tool on an MCP server
-   */
   async callTool(
     toolId: string,
     args: Record<string, unknown>,
-    userContext?: {
+    authContext?: {
       userId: string;
       oauthToken: string;
       scopes: string[];
@@ -132,17 +105,16 @@ export class McpClientManager {
     }
 
     try {
-      // Add user context to arguments
-      const enrichedArgs = {
-        ...args,
-        _userId: userContext?.userId,
-        _oauthToken: userContext?.oauthToken,
-        _scopes: userContext?.scopes,
-      };
+      if (authContext) {
+        this.authContexts.set(tool.serverId, {
+          token: authContext.oauthToken,
+          scopes: authContext.scopes,
+        });
+      }
 
       const result = await client.callTool({
         name: tool.name,
-        arguments: enrichedArgs,
+        arguments: args,
       });
 
       return result;
@@ -152,9 +124,10 @@ export class McpClientManager {
     }
   }
 
-  /**
-   * Disconnect from an MCP server
-   */
+  getAuthContext(serverId: string): { token: string; scopes: string[] } | undefined {
+    return this.authContexts.get(serverId);
+  }
+
   async disconnectServer(serverId: string): Promise<void> {
     const client = this.clients.get(serverId);
     const transport = this.transports.get(serverId);
@@ -168,7 +141,8 @@ export class McpClientManager {
       this.transports.delete(serverId);
     }
 
-    // Remove tools from this server
+    this.authContexts.delete(serverId);
+
     for (const [id, tool] of this.tools) {
       if (tool.serverId === serverId) {
         this.tools.delete(id);
@@ -178,9 +152,6 @@ export class McpClientManager {
     console.log(`🔌 Disconnected from ${serverId}`);
   }
 
-  /**
-   * Disconnect from all servers
-   */
   async disconnectAll(): Promise<void> {
     for (const serverId of this.clients.keys()) {
       await this.disconnectServer(serverId);
@@ -188,5 +159,4 @@ export class McpClientManager {
   }
 }
 
-// Export singleton instance
 export const mcpClientManager = new McpClientManager();

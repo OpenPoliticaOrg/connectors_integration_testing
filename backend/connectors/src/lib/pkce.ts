@@ -6,6 +6,9 @@
  */
 
 import { createHash, randomBytes } from "crypto";
+import { db, schema } from "@backend/db";
+import { eq, lt } from "drizzle-orm";
+import { encrypt, decrypt } from "./encryption";
 
 /**
  * Generate a code verifier (random string)
@@ -81,58 +84,85 @@ export function generatePKCE(): PKCEPair {
 }
 
 /**
- * Store PKCE verifier temporarily (in-memory with expiration)
- * In production, use Redis or database with TTL
+ * Database-backed PKCE store
+ * Production-ready - works with multiple server instances
  */
-class PKCEStore {
-  private store = new Map<string, { verifier: string; expires: number }>();
+
+/**
+ * Store PKCE verifier in database
+ * The verifier is encrypted before storage for security
+ */
+export async function storePkceChallenge(
+  state: string,
+  codeVerifier: string,
+  provider: string = "linear",
+  userId?: string,
+  ttlMs: number = 600000 // 10 minutes default
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + ttlMs);
   
-  /**
-   * Store verifier with state key
-   */
-  set(state: string, verifier: string, ttlMs: number = 600000): void {
-    // Default 10 minute expiration
-    this.store.set(state, {
-      verifier,
-      expires: Date.now() + ttlMs,
-    });
-    
-    // Clean up expired entries periodically
-    this.cleanup();
-  }
+  // Encrypt the code verifier before storing
+  const encryptedVerifier = encrypt(codeVerifier);
   
-  /**
-   * Get and delete verifier (one-time use)
-   */
-  get(state: string): string | null {
-    const entry = this.store.get(state);
-    
-    if (!entry) {
-      return null;
-    }
-    
-    if (Date.now() > entry.expires) {
-      this.store.delete(state);
-      return null;
-    }
-    
-    // Delete after retrieval (one-time use)
-    this.store.delete(state);
-    return entry.verifier;
-  }
-  
-  /**
-   * Clean up expired entries
-   */
-  private cleanup(): void {
-    const now = Date.now();
-    for (const [state, entry] of this.store.entries()) {
-      if (now > entry.expires) {
-        this.store.delete(state);
-      }
-    }
-  }
+  await db.insert(schema.pkceChallenges).values({
+    state,
+    codeVerifier: encryptedVerifier,
+    provider,
+    userId: userId || null,
+    expiresAt,
+  });
 }
 
-// Singleton instance
-export const pkceStore = new PKCEStore();
+/**
+ * Retrieve and delete PKCE verifier (one-time use)
+ * Automatically cleans up expired challenges
+ */
+export async function getPkceVerifier(state: string): Promise<{
+  codeVerifier: string;
+  provider: string;
+  userId: string | null;
+} | null> {
+  // Clean up expired challenges first
+  await cleanupExpiredChallenges();
+  
+  const challenge = await db.query.pkceChallenges.findFirst({
+    where: eq(schema.pkceChallenges.state, state),
+  });
+  
+  if (!challenge) {
+    return null;
+  }
+  
+  // Check if expired
+  if (new Date() > challenge.expiresAt) {
+    await db.delete(schema.pkceChallenges)
+      .where(eq(schema.pkceChallenges.id, challenge.id));
+    return null;
+  }
+  
+  // Delete after retrieval (one-time use)
+  await db.delete(schema.pkceChallenges)
+    .where(eq(schema.pkceChallenges.id, challenge.id));
+  
+  // Decrypt the code verifier
+  const codeVerifier = decrypt(challenge.codeVerifier);
+  
+  return {
+    codeVerifier,
+    provider: challenge.provider,
+    userId: challenge.userId,
+  };
+}
+
+/**
+ * Clean up expired PKCE challenges
+ */
+async function cleanupExpiredChallenges(): Promise<void> {
+  try {
+    await db.delete(schema.pkceChallenges)
+      .where(lt(schema.pkceChallenges.expiresAt, new Date()));
+  } catch (error) {
+    // Don't fail the request if cleanup fails
+    console.error("Failed to cleanup expired PKCE challenges:", error);
+  }
+}

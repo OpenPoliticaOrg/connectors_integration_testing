@@ -3,7 +3,34 @@ import { db, schema } from "@backend/db";
 import { eq } from "drizzle-orm";
 import { jwtAuthMiddleware } from "@/middleware/jwt-auth";
 import { encrypt, decryptSafe } from "@/lib/encryption";
-import { generatePKCE, pkceStore } from "@/lib/pkce";
+import { generatePKCE, storePkceChallenge, getPkceVerifier } from "@/lib/pkce";
+
+const GITHUB_WEBHOOK_SECRET = process.env.GITHUB_WEBHOOK_SECRET || "";
+
+/**
+ * Verify GitHub webhook signature using HMAC-SHA256
+ */
+function verifyGitHubSignature(
+  payload: string,
+  signature: string | null
+): boolean {
+  if (!GITHUB_WEBHOOK_SECRET) {
+    console.warn("GITHUB_WEBHOOK_SECRET not set, skipping verification");
+    return true;
+  }
+
+  if (!signature || !signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const expectedSignature = signature.slice(7); // Remove 'sha256=' prefix
+  const hmac = new Bun.CryptoHasher("sha256", GITHUB_WEBHOOK_SECRET);
+  hmac.update(payload);
+  const computedSignature = hmac.digest("hex");
+
+  // Timing-safe comparison
+  return computedSignature === expectedSignature;
+}
 
 const { githubInstallations, slackConnections, linearConnections } = schema;
 
@@ -31,7 +58,7 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
     const pkce = generatePKCE();
     
     // Store code verifier temporarily (10 minute expiration)
-    pkceStore.set(state, pkce.codeVerifier);
+    await storePkceChallenge(state, pkce.codeVerifier);
 
     const params = new URLSearchParams({
       client_id: clientId,
@@ -77,14 +104,16 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
 
     try {
       // Retrieve and verify PKCE code verifier
-      const codeVerifier = pkceStore.get(state || "");
+      const pkceData = await getPkceVerifier(state || "");
       
-      if (!codeVerifier) {
+      if (!pkceData) {
         return {
           success: false,
           error: "Invalid or expired state parameter. Please restart OAuth flow.",
         };
       }
+      
+      const codeVerifier = pkceData.codeVerifier;
 
       // Exchange code for access token (with PKCE)
       const tokenResponse = await fetch("https://api.linear.app/oauth/token", {
@@ -163,7 +192,7 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
       const [connection] = await db
         .insert(linearConnections)
         .values({
-          userId: "temp_pending_link", // Will be updated when user links
+          userId: null, // Will be updated when user links via /linear/link endpoint
           accessToken: encryptedAccessToken,
           refreshToken: encryptedRefreshToken,
           tokenExpiresAt: expires_in
@@ -226,7 +255,7 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
         return { success: false, error: "Connection not found" };
       }
 
-      if (connection.userId !== "temp_pending_link") {
+      if (connection.userId !== null) {
         return { success: false, error: "Connection already linked" };
       }
 
@@ -275,26 +304,58 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
     };
   })
 
-  // GitHub App webhook - NO AUTH (called by GitHub)
+  // GitHub App webhook - NO AUTH (signature verified)
   .post(
     "/github/webhook",
-    async ({ body }) => {
+    async ({ request, body }) => {
+      // Verify GitHub webhook signature
+      const signature = request.headers.get("x-hub-signature-256");
+      const rawBody = JSON.stringify(body);
+      
+      if (!verifyGitHubSignature(rawBody, signature)) {
+        console.error("❌ Invalid GitHub webhook signature");
+        return { success: false, error: "Invalid signature" };
+      }
+
       const { action, installation } = body as any;
 
       if (action === "created" || action === "added") {
-        await db.insert(githubInstallations).values({
-          userId: "system",
-          installationId: installation.id,
-          accountLogin: installation.account?.login,
-          accountType: installation.account?.type,
-          repositories: (installation.repositories || []).map((r: any) => ({
-            id: r.id,
-            name: r.name,
-            fullName: r.full_name,
-            private: r.private,
-          })),
-          isActive: true,
+        // Check if installation already exists
+        const existing = await db.query.githubInstallations.findFirst({
+          where: eq(githubInstallations.installationId, installation.id),
         });
+
+        if (existing) {
+          // Update existing installation
+          await db
+            .update(githubInstallations)
+            .set({
+              repositories: (installation.repositories || []).map((r: any) => ({
+                id: r.id,
+                name: r.name,
+                fullName: r.full_name,
+                private: r.private,
+              })),
+              isActive: true,
+              updatedAt: new Date(),
+            })
+            .where(eq(githubInstallations.installationId, installation.id));
+        } else {
+          // Create new installation (userId is null until linked)
+          await db.insert(githubInstallations).values({
+            userId: null, // Will be linked via /github/link endpoint
+            installationId: installation.id,
+            accountLogin: installation.account?.login,
+            accountType: installation.account?.type,
+            repositories: (installation.repositories || []).map((r: any) => ({
+              id: r.id,
+              name: r.name,
+              fullName: r.full_name,
+              private: r.private,
+            })),
+            isActive: true,
+          });
+        }
 
         return { success: true, message: "GitHub App installed" };
       }
@@ -302,7 +363,7 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
       if (action === "deleted" || action === "removed") {
         await db
           .update(githubInstallations)
-          .set({ isActive: false })
+          .set({ isActive: false, updatedAt: new Date() })
           .where(eq(githubInstallations.installationId, installation.id));
 
         return { success: true, message: "GitHub App uninstalled" };
@@ -344,6 +405,15 @@ export const oauthRoutes = new Elysia({ prefix: "/oauth" })
 
       if (!installation) {
         return { success: false, error: "Installation not found" };
+      }
+
+      if (installation.userId !== null) {
+        // Installation already linked to a user
+        // Only allow if it's the same user
+        if (installation.userId !== user.id) {
+          return { success: false, error: "Installation linked to another user" };
+        }
+        // Already linked to this user, return success
       }
 
       await db
