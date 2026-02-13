@@ -1,0 +1,197 @@
+# Docker Compose for Development with HTTPS
+# Run with: docker compose -f docker-compose.dev.yml up
+#
+# IMPORTANT: HTTPS is enabled for local development
+# This matches production behavior for OAuth webhooks
+
+services:
+  # ==========================================
+  # Traefik - Reverse Proxy with HTTPS
+  # ==========================================
+  traefik:
+    image: traefik:v3.2
+    command:
+      # Dashboard (dev only)
+      - "--api.insecure=true"
+      - "--api.dashboard=true"
+      
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      
+      # HTTP to HTTPS redirect
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      
+      # Development TLS (self-signed certificates)
+      - "--entrypoints.websecure.http.tls=true"
+      
+      # Logging
+      - "--log.level=DEBUG"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+    
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/etc/traefik/certs
+    
+    networks:
+      - app-network
+
+  # ==========================================
+  # PostgreSQL Database
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: connectors_dev
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # ==========================================
+  # Redis
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  # ==========================================
+  # Auth Service
+  # ==========================================
+  auth:
+    build:
+      context: .
+      dockerfile: backend/auth/Dockerfile
+    environment:
+      NODE_ENV: development
+      PORT: 5001
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/connectors_dev
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-dev-secret-change-in-prod-min-32-chars}
+      BETTER_AUTH_URL: https://localhost
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-in-prod}
+      CORS_ORIGINS: https://localhost,https://localhost:3000,http://localhost:3000
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      FROM_EMAIL: ${FROM_EMAIL:-noreply@example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    volumes:
+      - ./backend/auth/src:/app/backend/auth/src:ro
+      - ./backend/db/src:/app/backend/db/src:ro
+    labels:
+      - "traefik.enable=true"
+      # Auth routes (higher priority - more specific)
+      - "traefik.http.routers.auth.rule=Host(`localhost`) && (PathPrefix(`/api/auth`) || PathPrefix(`/.well-known`) || Path(`/health`))"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls=true"
+      - "traefik.http.routers.auth.priority=100"
+      - "traefik.http.services.auth.loadbalancer.server.port=5001"
+
+  # ==========================================
+  # Connectors Service
+  # ==========================================
+  connectors:
+    build:
+      context: .
+      dockerfile: backend/connectors/Dockerfile
+    environment:
+      NODE_ENV: development
+      PORT: 5002
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/connectors_dev
+      REDIS_URL: redis://redis:6379
+      AUTH_JWKS_URL: http://auth:5001/api/auth/jwks
+      AUTH_ISSUER: https://localhost
+      AUTH_AUDIENCE: https://localhost
+      CORS_ORIGINS: https://localhost,https://localhost:3000,http://localhost:3000
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-characters}
+      LINEAR_CLIENT_ID: ${LINEAR_CLIENT_ID}
+      LINEAR_CLIENT_SECRET: ${LINEAR_CLIENT_SECRET}
+      LINEAR_REDIRECT_URI: https://localhost/oauth/linear/callback
+      GITHUB_APP_NAME: ${GITHUB_APP_NAME}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    networks:
+      - app-network
+    volumes:
+      - ./backend/connectors/src:/app/backend/connectors/src:ro
+      - ./backend/db/src:/app/backend/db/src:ro
+    labels:
+      - "traefik.enable=true"
+      # Connectors routes - catch all other paths (lower priority)
+      - "traefik.http.routers.connectors.rule=Host(`localhost`)"
+      - "traefik.http.routers.connectors.entrypoints=websecure"
+      - "traefik.http.routers.connectors.tls=true"
+      - "traefik.http.routers.connectors.priority=1"
+      - "traefik.http.services.connectors.loadbalancer.server.port=5002"
+
+  # ==========================================
+  # Database Migration
+  # ==========================================
+  db-migrate:
+    build:
+      context: .
+      dockerfile: backend/auth/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/connectors_dev
+    command: ["bun", "x", "drizzle-kit", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    profiles:
+      - migrate
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  traefik-certs:

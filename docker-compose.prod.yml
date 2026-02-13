@@ -1,0 +1,215 @@
+# Docker Compose for Production
+# Run with: docker compose -f docker-compose.prod.yml up -d
+# 
+# IMPORTANT: Set these environment variables before deploying:
+# - DOMAIN=yourdomain.com
+# - ACME_EMAIL=your-email@example.com
+# - BETTER_AUTH_SECRET (32+ chars)
+# - JWT_SECRET
+# - ENCRYPTION_KEY (32 chars)
+# - All OAuth credentials
+
+services:
+  # ==========================================
+  # Traefik - Reverse Proxy with Let's Encrypt
+  # ==========================================
+  traefik:
+    image: traefik:v3.2
+    command:
+      # API (disabled in production for security)
+      - "--api.dashboard=true"
+      - "--api.insecure=false"
+      
+      # Docker provider
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=app-network"
+      
+      # Entrypoints
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      
+      # HTTP to HTTPS redirect
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      
+      # Let's Encrypt configuration
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/etc/traefik/certs/acme.json"
+      
+      # Logging
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+      - "--accesslog.fields.defaultmode=keep"
+      - "--accesslog.fields.headers.defaultmode=keep"
+    
+    ports:
+      - "80:80"
+      - "443:443"
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/etc/traefik/certs
+    
+    networks:
+      - app-network
+    
+    labels:
+      # Traefik dashboard (protected by basic auth)
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.traefik.entrypoints=websecure"
+      - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.traefik.service=api@internal"
+      - "traefik.http.routers.traefik.middlewares=traefik-auth"
+      # Basic auth - generate with: htpasswd -n admin
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=admin:$$apr1$$8EVj/nXk$$ZbqHxZrJy8h5ZqWzqMwJv0"
+    
+    restart: unless-stopped
+
+  # ==========================================
+  # PostgreSQL Database
+  # ==========================================
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      POSTGRES_DB: ${DB_NAME:-connectors}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+    # Don't expose port in production
+    # ports are internal only
+
+  # ==========================================
+  # Redis for Rate Limiting & Sessions
+  # ==========================================
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ==========================================
+  # Auth Service
+  # ==========================================
+  auth:
+    build:
+      context: .
+      dockerfile: backend/auth/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 5001
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-connectors}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      BETTER_AUTH_URL: https://${DOMAIN:-localhost}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      CORS_ORIGINS: https://${DOMAIN:-localhost},https://www.${DOMAIN:-localhost}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      FROM_EMAIL: ${FROM_EMAIL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=Host(`${DOMAIN:-localhost}`) && (PathPrefix(`/api/auth`) || Path(`/health`))"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.auth.priority=100"
+      - "traefik.http.services.auth.loadbalancer.server.port=5001"
+
+  # ==========================================
+  # Connectors Service
+  # ==========================================
+  connectors:
+    build:
+      context: .
+      dockerfile: backend/connectors/Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 5002
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-connectors}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      AUTH_JWKS_URL: http://auth:5001/api/auth/jwks
+      AUTH_ISSUER: https://${DOMAIN:-localhost}
+      AUTH_AUDIENCE: https://${DOMAIN:-localhost}
+      CORS_ORIGINS: https://${DOMAIN:-localhost},https://www.${DOMAIN:-localhost}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+      LINEAR_CLIENT_ID: ${LINEAR_CLIENT_ID}
+      LINEAR_CLIENT_SECRET: ${LINEAR_CLIENT_SECRET}
+      LINEAR_REDIRECT_URI: https://${DOMAIN:-localhost}/oauth/linear/callback
+      GITHUB_APP_NAME: ${GITHUB_APP_NAME}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    networks:
+      - app-network
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.connectors.rule=Host(`${DOMAIN:-localhost}`)"
+      - "traefik.http.routers.connectors.entrypoints=websecure"
+      - "traefik.http.routers.connectors.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.connectors.priority=1"
+      - "traefik.http.services.connectors.loadbalancer.server.port=5002"
+
+  # ==========================================
+  # Database Migration Job (run once)
+  # ==========================================
+  db-migrate:
+    build:
+      context: .
+      dockerfile: backend/auth/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-connectors}
+    working_dir: /app/backend/db
+    command: ["bun", "x", "drizzle-kit", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: "no"
+    profiles:
+      - migrate
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  traefik-certs:
