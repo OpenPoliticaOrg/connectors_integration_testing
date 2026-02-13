@@ -1,8 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { swagger } from "@elysiajs/swagger";
-import { authRoutes } from "@/routes/auth";
-import { authMiddleware, optionalAuthMiddleware } from "@/middleware/auth";
+import { auth } from "@/lib/auth";
 
 const app = new Elysia()
   .use(
@@ -11,8 +10,7 @@ const app = new Elysia()
         info: {
           title: "Auth API",
           version: "1.0.0",
-          description:
-            "Production-ready authentication API with Elysia, Better Auth, and JWT",
+          description: "Production-ready authentication API with Better Auth and JWT",
         },
       },
     }),
@@ -25,72 +23,26 @@ const app = new Elysia()
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     }),
   )
-  .use(authRoutes)
-
-  // Public routes
-  .get("/", () => ({
-    message: "Welcome to the API",
-    status: "ok",
-    docs: "/swagger",
-  }))
-
+  .mount(auth.handler)
   .get("/health", () => ({
     status: "healthy",
     timestamp: new Date().toISOString(),
   }))
-
-  // Protected routes with JWT
-  .use(authMiddleware)
-  .get("/api/me", ({ user, isAuthenticated }) => {
-    if (!isAuthenticated) {
-      return { error: "Unauthorized" };
-    }
-    return {
-      user: {
-        id: user?.id,
-        email: user?.email,
-        name: user?.name,
-        image: user?.image,
-      },
-    };
-  })
-
-  .get("/api/protected", ({ user, isAuthenticated, jwt }) => {
-    if (!isAuthenticated) {
-      return { error: "Unauthorized" };
-    }
-    return {
-      message: "This is a protected route",
-      user: user?.email,
-      jwt: jwt,
-    };
-  })
-
-  // Optional auth routes
-  .use(optionalAuthMiddleware)
-  .get("/api/public-or-auth", ({ user, isAuthenticated }) => {
-    return {
-      message: isAuthenticated
-        ? `Hello ${user?.name || user?.email}!`
-        : "Hello guest!",
-      isAuthenticated,
-    };
-  })
-
+  .get("/", () => ({
+    message: "Welcome to the Auth API",
+    status: "ok",
+    endpoints: {
+      auth: "/api/auth/*",
+      jwks: "/api/auth/jwks",
+      health: "/health",
+    },
+  }))
   .listen(process.env.PORT || 5001);
 
-console.log(
-  `🚀 Server is running at ${app.server?.hostname}:${app.server?.port}`,
-);
-console.log(
-  `📖 API Documentation: http://localhost:${app.server?.port}/swagger`,
-);
+console.log(`🚀 Server is running at ${app.server?.hostname}:${app.server?.port}`);
+console.log(`📖 API Documentation: http://localhost:${app.server?.port}/swagger`);
 console.log(`🔐 Auth endpoints available at /api/auth/*`);
-console.log(`🔐 Protected endpoints at /api/me, /api/protected`);
+console.log(`🔐 JWKS endpoint at /api/auth/jwks`);
 
-export type App = typeof app;
-
-// Export auth configuration and middleware for use by other services
-export { auth } from "@/lib/auth";
-export { authMiddleware, optionalAuthMiddleware } from "@/middleware/auth";
-export type { AuthContext } from "@/middleware/auth";
+export { auth };
+export type { Session, User } from "@/lib/auth";

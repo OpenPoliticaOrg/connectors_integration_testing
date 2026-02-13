@@ -1,5 +1,5 @@
-# Connectors Service Dockerfile
-# Build from monorepo root: docker build -f backend/connectors/Dockerfile -t connectors-service .
+# Auth Service Dockerfile
+# Build from monorepo root: docker build -f backend/auth/Dockerfile -t auth-service .
 
 # ============================================
 # Stage 1: Prune the monorepo
@@ -14,8 +14,8 @@ RUN bun add -g turbo@^2.8.7
 # Copy the monorepo
 COPY . .
 
-# Prune to only what connectors service needs
-RUN turbo prune @backend/connectors --docker
+# Prune to only what auth service needs
+RUN turbo prune @backend/auth --docker
 
 # ============================================
 # Stage 2: Install dependencies
@@ -75,13 +75,13 @@ USER bunuser
 
 # Environment defaults
 ENV NODE_ENV=production
-ENV PORT=5002
+ENV PORT=5001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:5002/health || exit 1
+  CMD curl -f http://localhost:5001/health || exit 1
 
-EXPOSE 5002
+EXPOSE 5001
 
 # Start the service
-CMD ["bun", "run", "backend/connectors/src/main.ts"]
+CMD ["bun", "run", "backend/auth/src/index.ts"]

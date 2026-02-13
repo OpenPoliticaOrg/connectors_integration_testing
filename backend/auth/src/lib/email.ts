@@ -1,9 +1,19 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 const isProduction = process.env.NODE_ENV === "production";
 const fromEmail = process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
+
+let resend: Resend | null = null;
+
+function getResend(): Resend | null {
+  if (!process.env.RESEND_API_KEY) {
+    return null;
+  }
+  if (!resend) {
+    resend = new Resend(process.env.RESEND_API_KEY);
+  }
+  return resend;
+}
 
 export const sendVerificationEmail = async ({
   user,
@@ -12,13 +22,20 @@ export const sendVerificationEmail = async ({
   user: { email: string; name?: string | null };
   url: string;
 }) => {
+  console.log(`📧 Verification email for ${user.email}: ${url}`);
+
   if (!isProduction) {
-    console.log(`📧 Verification email for ${user.email}: ${url}`);
+    return;
+  }
+
+  const client = getResend();
+  if (!client) {
+    console.warn("Email not sent - RESEND_API_KEY not configured");
     return;
   }
 
   try {
-    await resend.emails.send({
+    await client.emails.send({
       from: fromEmail,
       to: user.email,
       subject: "Verify your email",
@@ -35,7 +52,6 @@ export const sendVerificationEmail = async ({
     console.log(`✅ Verification email sent to ${user.email}`);
   } catch (error) {
     console.error("Failed to send verification email:", error);
-    throw error;
   }
 };
 
@@ -46,13 +62,20 @@ export const sendPasswordResetEmail = async ({
   user: { email: string; name?: string | null };
   url: string;
 }) => {
+  console.log(`📧 Password reset for ${user.email}: ${url}`);
+
   if (!isProduction) {
-    console.log(`📧 Password reset for ${user.email}: ${url}`);
+    return;
+  }
+
+  const client = getResend();
+  if (!client) {
+    console.warn("Email not sent - RESEND_API_KEY not configured");
     return;
   }
 
   try {
-    await resend.emails.send({
+    await client.emails.send({
       from: fromEmail,
       to: user.email,
       subject: "Reset your password",
@@ -70,7 +93,6 @@ export const sendPasswordResetEmail = async ({
     console.log(`✅ Password reset email sent to ${user.email}`);
   } catch (error) {
     console.error("Failed to send password reset email:", error);
-    throw error;
   }
 };
 
@@ -79,13 +101,20 @@ export const sendWelcomeEmail = async ({
 }: {
   user: { email: string; name?: string | null };
 }) => {
+  console.log(`📧 Welcome email for ${user.email}`);
+
   if (!isProduction) {
-    console.log(`📧 Welcome email for ${user.email}`);
+    return;
+  }
+
+  const client = getResend();
+  if (!client) {
+    console.warn("Email not sent - RESEND_API_KEY not configured");
     return;
   }
 
   try {
-    await resend.emails.send({
+    await client.emails.send({
       from: fromEmail,
       to: user.email,
       subject: "Welcome to our platform!",
@@ -99,7 +128,6 @@ export const sendWelcomeEmail = async ({
     console.log(`✅ Welcome email sent to ${user.email}`);
   } catch (error) {
     console.error("Failed to send welcome email:", error);
-    throw error;
   }
 };
 
@@ -114,13 +142,20 @@ export const sendOrganizationInvitationEmail = async ({
   inviter: { name?: string | null; email: string };
   url: string;
 }) => {
+  console.log(`📧 Org invite to ${email} for ${organization.name}: ${url}`);
+
   if (!isProduction) {
-    console.log(`📧 Org invite to ${email} for ${organization.name}: ${url}`);
+    return;
+  }
+
+  const client = getResend();
+  if (!client) {
+    console.warn("Email not sent - RESEND_API_KEY not configured");
     return;
   }
 
   try {
-    await resend.emails.send({
+    await client.emails.send({
       from: fromEmail,
       to: email,
       subject: `You've been invited to join ${organization.name}`,
@@ -138,6 +173,5 @@ export const sendOrganizationInvitationEmail = async ({
     console.log(`✅ Invitation email sent to ${email}`);
   } catch (error) {
     console.error("Failed to send invitation email:", error);
-    throw error;
   }
 };

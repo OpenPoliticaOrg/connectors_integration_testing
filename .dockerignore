@@ -1,0 +1,62 @@
+# Dependencies
+node_modules
+**/.bun
+
+# Build outputs
+**/dist
+**/.next
+**/build
+**/.turbo
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage
+.nyc_output
+
+# Database
+*.db
+*.sqlite
+
+# Docker (keep Dockerfiles for builds)
+docker-compose*.yml
+.docker
+
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+*.md
+CHANGELOG.md
+LICENSE
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+
+# Misc
+*.pem
+*.key
+*.cert

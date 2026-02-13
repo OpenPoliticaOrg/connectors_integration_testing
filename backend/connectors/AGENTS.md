@@ -14,13 +14,13 @@ AI Agent connectors service with OAuth integrations, webhooks, and MCP clients.
 This service does NOT use Better Auth. It validates JWTs from the auth service via JWKS.
 
 **JWKS validation:**
-- Fetch JWKS from auth service: `/.well-known/jwks.json`
+- Fetch JWKS from auth service: `/api/auth/jwks`
 - Cache JWKS client indefinitely
 - Validate tokens using `jose` library
 - Extract user info from JWT payload
 
 **Environment variables:**
-- `AUTH_JWKS_URL` (e.g., http://localhost:5001/.well-known/jwks.json)
+- `AUTH_JWKS_URL` (e.g., http://localhost:5001/api/auth/jwks)
 - `AUTH_ISSUER`
 - `AUTH_AUDIENCE`
 
@@ -47,13 +47,26 @@ This service does NOT use Better Auth. It validates JWTs from the auth service v
 - Decrypt tokens only when needed
 - Implement token refresh for expiring tokens
 
-### Webhook Security
+**Webhook Security**
 
 Webhooks don't use JWT - they use signature verification:
 
 **Slack:** Verify `x-slack-signature` header using signing secret
 **Linear:** Verify webhook signature (if provided)
-**GitHub:** Verify signature using webhook secret (TODO)
+**GitHub:** Verify `x-hub-signature-256` header using webhook secret
+
+### Rate Limiting
+
+Uses Redis for distributed rate limiting across multiple server instances:
+- **API routes:** 100 requests/minute (JWT protected)
+- **Webhooks:** No rate limit (signature verification is sufficient security)
+- Redis connection via `REDIS_URL` environment variable
+- Bun's native Redis client - no external dependencies
+
+**Why no webhook rate limiting:**
+- Slack, GitHub, Linear all cryptographically sign their webhooks
+- These platforms have their own rate limits
+- Active conversations shouldn't be blocked
 
 ### MCP Client Pattern
 
@@ -132,10 +145,13 @@ bun run start
 # Database
 DATABASE_URL=postgresql://...
 
+# Redis (for distributed rate limiting)
+REDIS_URL=redis://localhost:6379
+
 # JWT Validation
-AUTH_JWKS_URL=http://localhost:5001/.well-known/jwks.json
-AUTH_ISSUER=http://localhost:5001
-AUTH_AUDIENCE=http://localhost:5001
+AUTH_JWKS_URL=http://localhost:5001/api/auth/jwks
+AUTH_ISSUER=https://localhost
+AUTH_AUDIENCE=https://localhost
 
 # CORS
 CORS_ORIGINS=http://localhost:3000
@@ -151,6 +167,7 @@ GITHUB_APP_NAME=
 
 # Webhooks
 SLACK_SIGNING_SECRET=
+GITHUB_WEBHOOK_SECRET=
 
 # AI
 ANTHROPIC_API_KEY=
