@@ -18,6 +18,7 @@ export const auth = betterAuth({
       member: schema.members,
       invitation: schema.invitations,
       twoFactor: schema.twoFactors,
+      jwks: schema.jwks,
     },
   }),
   secret: process.env.BETTER_AUTH_SECRET,
