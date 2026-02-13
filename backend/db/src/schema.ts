@@ -21,93 +21,152 @@ export const users = pgTable("users", {
   name: text("name"),
   emailVerified: boolean("email_verified").default(false),
   image: text("image"),
+  role: text("role").default("user"),
+  banned: boolean("banned").default(false),
+  banReason: text("ban_reason"),
+  banExpires: timestamp("ban_expires"),
+  twoFactorEnabled: boolean("two_factor_enabled").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const sessions = pgTable("sessions", {
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    token: text("token").notNull().unique(),
+    expiresAt: timestamp("expires_at").notNull(),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    impersonatedBy: text("impersonated_by"),
+    activeOrganizationId: text("active_organization_id"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index("sessions_user_id_idx").on(table.userId),
+  }),
+);
+
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at"),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
+    scope: text("scope"),
+    idToken: text("id_token"),
+    password: text("password"),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    userIdIdx: index("accounts_user_id_idx").on(table.userId),
+  }),
+);
+
+export const verifications = pgTable(
+  "verifications",
+  {
+    id: text("id").primaryKey(),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+    updatedAt: timestamp("updated_at").defaultNow(),
+  },
+  (table) => ({
+    identifierIdx: index("verifications_identifier_idx").on(table.identifier),
+  }),
+);
+
+export const organizations = pgTable(
+  "organizations",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    slug: text("slug").unique(),
+    logo: text("logo"),
+    createdAt: timestamp("created_at").defaultNow(),
+    metadata: text("metadata"),
+  },
+  (table) => ({
+    slugIdx: index("organizations_slug_idx").on(table.slug),
+  }),
+);
+
+export const members = pgTable(
+  "members",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    role: text("role").default("member").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    organizationIdIdx: index("members_organization_id_idx").on(table.organizationId),
+    userIdIdx: index("members_user_id_idx").on(table.userId),
+  }),
+);
+
+export const invitations = pgTable(
+  "invitations",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id),
+    email: text("email").notNull(),
+    role: text("role"),
+    status: text("status").default("pending").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    inviterId: text("inviter_id")
+      .notNull()
+      .references(() => users.id),
+  },
+  (table) => ({
+    organizationIdIdx: index("invitations_organization_id_idx").on(table.organizationId),
+    emailIdx: index("invitations_email_idx").on(table.email),
+  }),
+);
+
+export const twoFactors = pgTable(
+  "two_factors",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    secret: text("secret").notNull(),
+    backupCodes: text("backup_codes").notNull(),
+  },
+  (table) => ({
+    secretIdx: index("two_factors_secret_idx").on(table.secret),
+    userIdIdx: index("two_factors_user_id_idx").on(table.userId),
+  }),
+);
+
+export const jwks = pgTable("jwks", {
   id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  token: text("token").notNull().unique(),
-  expiresAt: timestamp("expires_at").notNull(),
-  ipAddress: text("ip_address"),
-  userAgent: text("user_agent"),
+  publicKey: text("public_key").notNull(),
+  privateKey: text("private_key").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const accounts = pgTable("accounts", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  accountId: text("account_id").notNull(),
-  providerId: text("provider_id").notNull(),
-  accessToken: text("access_token"),
-  refreshToken: text("refresh_token"),
-  accessTokenExpiresAt: timestamp("access_token_expires_at"),
-  refreshTokenExpiresAt: timestamp("refresh_token_expires_at"),
-  scope: text("scope"),
-  idToken: text("id_token"),
-  password: text("password"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const verifications = pgTable("verifications", {
-  id: text("id").primaryKey(),
-  identifier: text("identifier").notNull(),
-  value: text("value").notNull(),
-  expiresAt: timestamp("expires_at").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
-
-export const organizations = pgTable("organizations", {
-  id: text("id").primaryKey(),
-  name: text("name").notNull(),
-  slug: text("slug").unique(),
-  logo: text("logo"),
-  createdAt: timestamp("created_at").defaultNow(),
-  metadata: text("metadata"),
-});
-
-export const members = pgTable("members", {
-  id: text("id").primaryKey(),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organizations.id),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  role: text("role").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const invitations = pgTable("invitations", {
-  id: text("id").primaryKey(),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organizations.id),
-  email: text("email").notNull(),
-  role: text("role"),
-  status: text("status").default("pending"),
-  expiresAt: timestamp("expires_at").notNull(),
-  inviterId: text("inviter_id")
-    .notNull()
-    .references(() => users.id),
-});
-
-export const twoFactors = pgTable("two_factors", {
-  id: text("id").primaryKey(),
-  userId: text("user_id")
-    .notNull()
-    .references(() => users.id),
-  secret: text("secret").notNull(),
-  backupCodes: text("backup_codes").notNull(),
-  enabled: boolean("enabled").default(false),
+  expiresAt: timestamp("expires_at"),
 });
 
 // ==========================================
@@ -115,13 +174,12 @@ export const twoFactors = pgTable("two_factors", {
 // ==========================================
 
 // GitHub App Installations
+// userId is nullable to allow installations to be stored before being linked to a user
 export const githubInstallations = pgTable(
   "github_installations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: text("user_id")
-      .references(() => users.id)
-      .notNull(),
+    userId: text("user_id").references(() => users.id),
     installationId: integer("installation_id").notNull(),
     accountLogin: varchar("account_login", { length: 255 }),
     accountType: varchar("account_type", { length: 50 }),
@@ -137,6 +195,7 @@ export const githubInstallations = pgTable(
 );
 
 // Slack Connections
+// botToken must be encrypted before storage
 export const slackConnections = pgTable(
   "slack_connections",
   {
@@ -160,13 +219,12 @@ export const slackConnections = pgTable(
 );
 
 // Linear Connections
+// userId is nullable to allow connections to be stored during OAuth flow before linking to a user
 export const linearConnections = pgTable(
   "linear_connections",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    userId: text("user_id")
-      .references(() => users.id)
-      .notNull(),
+    userId: text("user_id").references(() => users.id),
     accessToken: text("access_token").notNull(),
     refreshToken: text("refresh_token"),
     tokenExpiresAt: timestamp("token_expires_at"),
@@ -182,6 +240,24 @@ export const linearConnections = pgTable(
   (table) => ({
     userIdIdx: index("linear_connections_user_id_idx").on(table.userId),
     linearUserIdIdx: index("linear_connections_linear_user_id_idx").on(table.linearUserId),
+  }),
+);
+
+// PKCE Challenges - Stores PKCE code verifiers for OAuth flows
+export const pkceChallenges = pgTable(
+  "pkce_challenges",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    state: text("state").notNull().unique(),
+    codeVerifier: text("code_verifier").notNull(),
+    provider: varchar("provider", { length: 50 }).notNull(),
+    userId: text("user_id").references(() => users.id),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    stateIdx: index("pkce_challenges_state_idx").on(table.state),
+    expiresAtIdx: index("pkce_challenges_expires_at_idx").on(table.expiresAt),
   }),
 );
 
@@ -346,7 +422,9 @@ export type SlackConnection = typeof slackConnections.$inferSelect;
 export type SlackEvent = typeof slackEvents.$inferSelect;
 export type LinearConnection = typeof linearConnections.$inferSelect;
 export type LinearEvent = typeof linearEvents.$inferSelect;
+export type PkceChallenge = typeof pkceChallenges.$inferSelect;
 export type Tool = typeof tools.$inferSelect;
 export type UserTool = typeof userTools.$inferSelect;
 export type AgentRun = typeof agentRuns.$inferSelect;
 export type ToolCall = typeof toolCalls.$inferSelect;
+export type Jwks = typeof jwks.$inferSelect;
